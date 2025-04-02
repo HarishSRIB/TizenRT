@@ -61,10 +61,10 @@
 #include <arpa/inet.h>
 #endif
 
-#define MDNS_DEBUG_PRINTF	0
+#define MDNS_DEBUG_PRINTF	1
 
 #if MDNS_DEBUG_PRINTF==1
-#define MDNS_RR_DEBUG		0
+#define MDNS_RR_DEBUG		1
 #define MDNS_MEMORY_DEBUG	0
 #endif
 

@@ -68,6 +68,13 @@
 #include <netdb.h>
 #include <sys/socket.h>
 
+#include <apps/shell/tash.h>
+#include <wifi_manager/wifi_manager.h>
+#include <tinyara/pm/pm.h>
+#include <tinyara/fs/ioctl.h>
+
+#define PM_DRVPATH	  "/dev/pm"
+
 /****************************************************************************
  * Definitions
  ****************************************************************************/
@@ -252,4 +259,195 @@ int mdns_main(int argc, char *argv[])
 
 errout:
 	return -1;
+}
+
+/*  callback */
+void _wt_sta_connected(wifi_manager_cb_msg_s msg, void *arg)
+{
+	printf("%s enter\n", __func__);
+}
+
+void _wt_sta_disconnected(wifi_manager_cb_msg_s msg, void *arg)
+{
+    printf("%s enter\n", __func__);
+}
+
+void _wt_softap_sta_join(wifi_manager_cb_msg_s msg, void *arg)
+{
+    printf("%s enter\n", __func__);
+}
+
+void _wt_softap_sta_leave(wifi_manager_cb_msg_s msg, void *arg)
+{
+    printf("%s enter\n", __func__);
+}
+
+void _wt_scan_done(wifi_manager_cb_msg_s msg, void *arg)
+{
+    printf("%s enter\n", __func__);
+}
+
+static wifi_manager_cb_s g_wifi_callbacks = {
+	_wt_sta_connected,
+	_wt_sta_disconnected,
+	_wt_softap_sta_join,
+	_wt_softap_sta_leave,
+	_wt_scan_done,
+};
+
+static int connect_to_wifi(int argc, char *argv[])
+{
+    if (argc !=3)
+    {
+        printf("Usage: wificonnect <ssid> <password>\n");
+        return 1;
+    }
+
+	wifi_manager_info_s wminfo;
+    wifi_manager_result_e res = WIFI_MANAGER_SUCCESS;
+    char *ssid = argv[1];
+    char *passphrase = argv[2];
+
+    res = wifi_manager_init(&g_wifi_callbacks);
+    if (res != WIFI_MANAGER_SUCCESS) {
+        printf("wifi manager init failed!\n");
+        return 1;
+    }
+
+	if (wifi_manager_get_info(&wminfo) != WIFI_MANAGER_SUCCESS) {
+		printf("Failed to get wifi info!\n");
+		return 1;
+	}
+
+	if (wminfo.status == AP_CONNECTED) {
+		printf("WIFI is connected to %s", wminfo.ssid);
+        if (strcmp(wminfo.ssid, ssid)) {
+            printf("Disconnecting it to make new connection\n");
+        } else {
+            return 1;
+        }
+	}
+
+    // start wifi connection
+    wifi_manager_ap_config_s apconfig;
+    strncpy(apconfig.ssid, ssid, WIFIMGR_SSID_LEN);
+    apconfig.ssid_length = strlen(ssid);
+    apconfig.ssid[WIFIMGR_SSID_LEN] = '\0';
+    apconfig.ap_auth_type = WIFI_MANAGER_AUTH_WPA2_PSK;
+    strncpy(apconfig.passphrase, passphrase, WIFIMGR_PASSPHRASE_LEN);
+    apconfig.passphrase[WIFIMGR_PASSPHRASE_LEN] = '\0';
+    apconfig.passphrase_length = strlen(passphrase);
+    apconfig.ap_crypto_type = WIFI_MANAGER_CRYPTO_AES;
+
+    printf("Trying to connect ap:%s\n", ssid);
+    res = wifi_manager_connect_ap(&apconfig);
+    if (res != WIFI_MANAGER_SUCCESS) {
+        printf("Failed to connect to given access point\n");
+        return 1;
+    }
+	return 0;
+}
+
+static int _pm_start(void)
+{
+	int fd = open(PM_DRVPATH, O_WRONLY);
+	if (fd < 0) {
+		printf("Fail to open pm start(errno %d)", get_errno());
+		return -1;
+	}
+
+	if (ioctl(fd, PMIOC_START, NULL) < 0) {
+		printf("Fail to pm start(errno %d)\n", get_errno());
+		close(fd);
+		return -1;
+	}
+
+	close(fd);
+	return 0;
+}
+
+static int _pm_domain_register(char *domain_name, int *domain_id)
+{
+	int fd;
+	pm_domain_arg_t domain_arg;
+
+	fd = open(PM_DRVPATH, O_WRONLY);
+	if (fd < 0) {
+		printf("Fail to open pm domain register(errno %d)", get_errno());
+		return -1;
+	}
+	domain_arg.domain_name = domain_name;
+	if (ioctl(fd, PMIOC_DOMAIN_REGISTER, &domain_arg) < 0) {
+		printf("Fail to pm domain register(errno %d)\n", get_errno());
+		close(fd);
+		return -1;
+	}
+	*domain_id = domain_arg.domain_id;
+	close(fd);
+	return 0;
+}
+
+static int _pm_suspend(int domain_id)
+{
+	int fd = open(PM_DRVPATH, O_WRONLY);
+	if (fd < 0) {
+		printf("Fail to open pm suspend(errno %d)", get_errno());
+		return -1;
+	}
+
+	if (ioctl(fd, PMIOC_SUSPEND, NULL) < 0) {
+		printf("Fail to pm suspend(errno %d)\n", get_errno());
+		close(fd);
+		return -1;
+	}
+
+	close(fd);
+	return 0;
+}
+
+static int _pm_resume(int domain_id)
+{
+	int fd = open(PM_DRVPATH, O_WRONLY);
+	if (fd < 0) {
+		printf("Fail to open pm resume(errno %d)", get_errno());
+		return -1;
+	}
+
+	if (ioctl(fd, PMIOC_RESUME, NULL) < 0) {
+		printf("Fail to pm resume(errno %d)\n", get_errno());
+		close(fd);
+		return -1;
+	}
+
+	close(fd);
+	return 0;
+}
+
+int mdns_stability_main(int argc, char *argv[])
+{
+	sleep(2);
+
+	printf("\n==============================\n");
+	printf("MDNS STABILITY TEST APP\n");
+	printf("==============================\n");
+
+	tash_cmdlist_t cmd_list[] = {
+		{"mdns", mdns_main, TASH_EXECMD_ASYNC},
+		{"wificonnect", connect_to_wifi, TASH_EXECMD_ASYNC},
+		{NULL, NULL, 0}};
+	tash_cmdlist_install(cmd_list);
+	printf("Registering tash commands done!\n");
+
+	if (_pm_start() != 0) {
+        printf("system_pm_start failed!\n");
+	}
+	else {
+		printf("system_pm_start done!\n");
+	}
+
+	while (1)
+	{
+		sleep(1);
+	}
+	return 0;
 }
