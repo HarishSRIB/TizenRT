@@ -175,7 +175,7 @@ static err_t _lwip_nic_init(struct netif *nic)
 	nic->name[1] = 'l';
 
 	// To Do: apply flag which is set in netdev
-	// nic->flags = NETIF_FLAG_ETHARP | NETIF_FLAG_ETHERNET | NETIF_FLAG_BROADCAST | NETIF_FLAG_IGMP;
+	nic->flags = NETIF_FLAG_ETHARP | NETIF_FLAG_ETHERNET | NETIF_FLAG_BROADCAST | NETIF_FLAG_IGMP;
 	return ERR_OK;
 }
 

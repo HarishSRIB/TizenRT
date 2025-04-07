@@ -23,6 +23,9 @@
 #include <sys/ioctl.h>
 #include <netdb.h>
 #include <ifaddrs.h>
+#ifdef CONFIG_KLOGBUFFER
+#include <tinyara/klogbuffer.h>
+#endif
 #include <tinyara/kmalloc.h>
 #include <tinyara/netmgr/netdev_mgr.h>
 #include <net/if.h>
@@ -156,6 +159,10 @@ int _netdev_dhcpc_start(const char *intf)
 		timeleft -= 100;
 		if (timeleft <= 0) {
 			NET_LOGKE(TAG, "DHCP client timeout\n");
+			printf("NE54 DHCP timeout\n");
+#ifdef CONFIG_KLOGBUFFER
+			KLOG_BUFFER_ADD_ERROR("NE54", NULL);
+#endif
 			netifapi_dhcp_stop(cnif);
 			return ERROR;
 		}
@@ -181,6 +188,11 @@ int _netdev_dhcpc_stop(const char *intf)
 	NET_LOGKV(TAG, "Release IP address (lwip)\n");
 
 	return OK;
+}
+
+ap_type _netdev_dhcpc_get_aptype(void)
+{
+	return dhcp_get_aptype();
 }
 
 int _netdev_dhcpc_sethostname(struct lwip_dhcp_msg *msg)
@@ -436,6 +448,10 @@ static int lwip_func_ioctl(int s, int cmd, void *arg)
 			NET_LOGKE(TAG, "Set dhcp host name failed %d\n", req->req_res);
 			goto errout;
 		}
+		ret = OK;
+		break;
+	case DHCPCGETAPTYPE:
+		req->req_res = (int)_netdev_dhcpc_get_aptype();
 		ret = OK;
 		break;
 #endif

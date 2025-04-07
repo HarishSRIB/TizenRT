@@ -71,12 +71,20 @@
 /**
  * @brief Structure of MDNS service information
  */
+
+struct mdns_txt_record {
+	char *key;
+	char *value;
+	struct mdns_txt_record *next;
+};
+
 struct mdns_service_info {
 	char *type;
 	char *instance_name;
 	char *hostname;
 	unsigned int ipaddr;		/* ipv4 */
 	unsigned int port;
+	struct mdns_txt_record *txt_records;
 };
 
 #ifdef __cplusplus

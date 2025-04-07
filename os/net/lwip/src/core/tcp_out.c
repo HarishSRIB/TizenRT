@@ -343,6 +343,34 @@ static err_t tcp_write_checks(struct tcp_pcb *pcb, u16_t len)
 }
 
 /**
+ * Against to attack, need to masking ip address in logs. (from security team)
+ * @param full_addr input string
+ * @param masking_addr output string
+*/
+static void masking_ip_addr(char *full_addr, char *masking_addr)
+{
+	const int addr_len = (int)strnlen(full_addr, 15 + 1);
+
+	memset(masking_addr, 0, 15 + 1);
+
+	const int masking_pos[4] = {0, 1, 1, 0};  // 1 will be masked (000.xxx.xxx.000)
+	int pos = 0;
+
+	for (int i = 0, j = 0; i < addr_len; i++) {
+		if (full_addr[i] == '.') {
+			masking_addr[j++] = full_addr[i];
+			if (masking_pos[++pos] == 1) {
+				masking_addr[j++] = 'x';
+			}
+			continue;
+		}
+		if (masking_pos[pos] != 1) {
+			masking_addr[j++] = full_addr[i];
+		}
+	}
+}
+
+/**
  * Write data for sending (but does not send it immediately).
  *
  * It waits in the expectation of more data being sent soon (as
@@ -391,6 +419,23 @@ err_t tcp_write(struct tcp_pcb *pcb, const void *arg, u16_t len, u8_t apiflags)
 
 	LWIP_DEBUGF(TCP_OUTPUT_DEBUG, ("tcp_write(pcb=%p, data=%p, len=%" U16_F ", apiflags=%" U16_F ")\n", (void *)pcb, arg, len, (u16_t) apiflags));
 	LWIP_ERROR("tcp_write: arg == NULL (programmer violates API)", arg != NULL, return ERR_ARG;);
+
+	time_t time_info = time(NULL);
+	struct tm *tm = localtime(&time_info);
+
+	// for korea time zone
+	tm->tm_hour = (tm->tm_hour + 9) % 24;
+
+	struct timespec current_time;
+	clock_gettime(CLOCK_REALTIME, &current_time);
+
+	char masking_addr[15+1] = {0, };
+	masking_ip_addr(ipaddr_ntoa(&pcb->remote_ip), masking_addr);
+	
+	char log_buffer[64] = "";
+	snprintf(log_buffer, 64, "\e[36m|%02d:%02d:%02d|TS|%s|%hdB\e[m",
+			tm->tm_hour, tm->tm_min, tm->tm_sec, masking_addr, len);
+	puts(log_buffer);
 
 	err = tcp_write_checks(pcb, len);
 	if (err != ERR_OK) {

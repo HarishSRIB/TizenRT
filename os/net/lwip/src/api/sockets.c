@@ -434,7 +434,12 @@ static struct lwip_sock *tryget_socket(int s, void *group)
 static struct lwip_sock *tryget_socket_by_pid(int s, pid_t pid)
 {
 	struct tcb_s *tcb = sched_gettcb(pid);
-	DEBUGASSERT(tcb && tcb->group);
+	if(!(tcb && tcb->group))
+	{
+		LWIP_DEBUGF(SOCKETS_DEBUG, ("get_socket(%d): tcb or tcb group is NULL\n", s + LWIP_SOCKET_OFFSET));
+		set_errno(EBADF);
+		return NULL;
+	}
 
 	return tryget_socket(s, (void *)tcb->group);
 }
@@ -3035,7 +3040,12 @@ static void lwip_socket_drop_registered_memberships(struct lwip_sock *sock)
 struct lwip_sock *get_socket_by_pid(int s, pid_t pid)
 {
 	struct tcb_s *tcb = sched_gettcb(pid);
-	DEBUGASSERT(tcb && tcb->group);
+	if(!(tcb && tcb->group))
+	{
+		LWIP_DEBUGF(SOCKETS_DEBUG, ("get_socket(%d): tcb or tcb group is NULL\n", s + LWIP_SOCKET_OFFSET));
+		set_errno(EBADF);
+		return NULL;
+	}
 
 	return get_socket(s, (void *)tcb->group);
 }

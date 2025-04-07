@@ -179,7 +179,8 @@ static int g_cmd_lock_initialized = 0;
 #ifdef MDNSD_RR_DEBUG
 static void print_rr_entry(struct rr_entry *rr_e)
 {
-	char *str1, *str2;
+	char *str1 = NULL;
+	char *str2 = NULL;
 
 	if (!rr_e) {
 		DEBUG_PRINTF("ERROR: No RR Entry\n");
@@ -192,18 +193,25 @@ static void print_rr_entry(struct rr_entry *rr_e)
 		str1 = NULL;
 	}
 
-	if ((rr_e->type == RR_PTR) && rr_e->data.PTR.name) {
-		str2 = nlabel_to_str(rr_e->data.PTR.name);
-	} else if ((rr_e->type == RR_SRV) && rr_e->data.SRV.target) {
-		str2 = nlabel_to_str(rr_e->data.SRV.target);
-	} else {
-		str2 = NULL;
-	}
-
 	DEBUG_PRINTF("type:%s, ttl=%d, time=%d, ca_fl=%d, rr_class=%d, name=[%s]", rr_get_type_name(rr_e->type), rr_e->ttl, (unsigned int)(time(NULL) - rr_e->update_time), (int)rr_e->cache_flush, rr_e->rr_class, str1 ? str1 : "NULL");
 
-	if (rr_e->type == RR_SRV || rr_e->type == RR_PTR) {
+	if ((rr_e->type == RR_PTR) && rr_e->data.PTR.name) {
+		str2 = nlabel_to_str(rr_e->data.PTR.name);
 		DEBUG_PRINTF(", target=[%s]\n", str2 ? str2 : "NULL");
+	} else if ((rr_e->type == RR_SRV) && rr_e->data.SRV.target) {
+		str2 = nlabel_to_str(rr_e->data.SRV.target);
+		DEBUG_PRINTF(", target=[%s]\n", str2 ? str2 : "NULL");
+	} else if (rr_e->type == RR_TXT) {
+		struct rr_data_txt *current = &rr_e->data.TXT;
+		DEBUG_PRINTF(", targets=");
+		while (current != NULL) {
+			str2 = nlabel_to_str(current->txt);
+			DEBUG_PRINTF("[%s] ", str2 ? str2 : "NULL");
+			MDNS_FREE(str2);
+			str2 = NULL;
+			current = current->next;
+		}
+		DEBUG_PRINTF("\n");
 	} else {
 		DEBUG_PRINTF("\n");
 	}
@@ -421,9 +429,8 @@ static int lookup_service(struct mdnsd *svr, char *type, struct mdns_service_inf
 															   RR_SRV);
 						if (srv_e && srv_e->name) {
 							char *name = nlabel_to_str(srv_e->name);	/* full service name */
-							char *ptr = strstr(name,
-											   type_without_subtype);	/* separate instance name and service type */
-
+							char *ptr = strstr(name, type_without_subtype);	/* separate instance name and service type */
+					
 							if (ptr && (ptr > name)) {
 								*(ptr - 1) = '\0';
 							} else {
@@ -454,22 +461,51 @@ static int lookup_service(struct mdnsd *svr, char *type, struct mdns_service_inf
 										service_list[result_cnt].ipaddr = a_e->data.A.addr;
 									}
 								}
-
 							}
 
 							/* port */
 							service_list[result_cnt].port = srv_e->data.SRV.port;
 
-							result_cnt++;	/* increase result count */
+							/*Extract TXT Records*/
+							struct rr_entry *txt_e = rr_entry_find(srv_grp->rr, entry->data.PTR.name, RR_TXT);
+							char* str_txt;
+							if (txt_e) {
+								struct rr_data_txt *current = &txt_e->data.TXT;
+								while (current != NULL) {
+									str_txt = nlabel_to_str(current->txt);
+									char *key = strtok((char *)str_txt, "=");
+									if (key) {
+										char *value = strtok(NULL, ".");
+										
+										size_t key_length = strlen(key);
+    										size_t value_length = strlen(value);
+										
+										struct mdns_txt_record *new_record = MDNS_MALLOC(sizeof(struct mdns_txt_record));
+										new_record->key = strdup(key);
+										new_record->value = strdup(value);
+										new_record->next = NULL;
 
+										struct mdns_txt_record *temp = service_list[result_cnt].txt_records;
+										if (temp == NULL) {
+											service_list[result_cnt].txt_records = new_record;
+										}
+										else {
+											while (temp->next != NULL) {
+												temp = temp->next;
+											}
+											temp->next = new_record;
+										}
+									}
+									current = current->next;
+								}
+							}
+
+							result_cnt++; /*increase result count*/
 							if (result_cnt >= MAX_NUMBER_OF_SERVICE_DISCOVERY_RESULT) {
 								break;
 							}
-
 						}
-
 					}
-
 				}
 			}
 		}
@@ -751,7 +787,7 @@ static void update_cache(struct mdnsd *svr)
 			entry = list->e;
 			if (entry) {
 				/* if ttl is expired or rr is RR_PTR or RR_SRV, remove rr from cache */
-				if (((time(NULL) - entry->update_time) > entry->ttl) || (svr->c_status != CACHE_SERVICE_DISCOVERY && (entry->type == RR_PTR || entry->type == RR_SRV))) {
+				if (((time(NULL) - entry->update_time) > entry->ttl) || (svr->c_status != CACHE_SERVICE_DISCOVERY && (entry->type == RR_PTR || entry->type == RR_SRV || entry->type == RR_TXT))) {
 					rr_list_append(&remove_list, entry);
 				}
 			}
@@ -832,6 +868,10 @@ static void add_rr_to_cache(struct mdnsd *svr, struct mdns_pkt *pkt)
 					if (svr->c_status == CACHE_SERVICE_DISCOVERY) {
 						rr_list_append(&filtered_rr_list, rr_e);
 					}
+				} else if (rr_e->type == RR_TXT) {
+					if (svr->c_status == CACHE_SERVICE_DISCOVERY) {
+						rr_list_append(&filtered_rr_list, rr_e);
+				 	}
 				}
 			}
 		}
@@ -1200,6 +1240,7 @@ static void main_loop(struct mdnsd *svr)
 				socklen_t sockaddr_size = sizeof(struct sockaddr_in);
 				ssize_t recvsize = recvfrom(svr->sockfd, pkt_buffer, PACKET_SIZE, 0,
 											(struct sockaddr *)&fromaddr, &sockaddr_size);
+
 				if (recvsize < 0) {
 					int errval = errno;
 					printf("ERROR: recv() failed. (recvsize: %d, errno: %d)\n", recvsize, errval);
@@ -1422,7 +1463,7 @@ static int probe_hostname(struct mdnsd *svr, char *hostname)
 
 		request_sendmsg(svr);
 
-		usleep(250 * 1000);		// 250ms delay
+		usleep(250 * 1000);		// 250 ms delay
 
 		if (lookup_hostname(svr, hostname) == 0) {
 			result = 0;
@@ -1458,6 +1499,7 @@ static void init_service_discovery_result(struct mdns_service_info
 		service_list[i].hostname = NULL;
 		service_list[i].ipaddr = 0;
 		service_list[i].port = 0;
+		service_list[i].txt_records = NULL;
 	}
 }
 
@@ -1489,6 +1531,21 @@ static void clear_service_discovery_result(struct mdns_service_info
 
 		service_list[i].ipaddr = 0;
 		service_list[i].port = 0;
+
+		struct mdns_txt_record *current, *next;
+		current = service_list[i].txt_records;
+		while (current != NULL) {
+			next = current->next;
+			if (current->key) {
+				MDNS_FREE(current->key);
+			}
+			if (current->value) {
+				MDNS_FREE(current->value);
+			}
+			MDNS_FREE(current);
+			current = next;
+		}
+		service_list[i].txt_records = NULL;
 	}
 }
 

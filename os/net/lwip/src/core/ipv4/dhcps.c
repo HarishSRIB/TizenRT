@@ -49,6 +49,9 @@
  * Included Files
  ****************************************************************************/
 #include <tinyara/config.h>
+#ifdef CONFIG_KLOGBUFFER
+#include <tinyara/klogbuffer.h>
+#endif
 #include "lwip/opt.h"
 
 #if LWIP_IPV4 && LWIP_DHCP /* don't build if not configured for use in lwipopts.h */
@@ -586,6 +589,22 @@ static int16_t dhcps_parse_msg(struct dhcps_msg *m, u16_t len)
 	} else {
 		pdhcps_pool = (struct dhcps_pool *)mem_malloc(sizeof(struct dhcps_pool));
 		if (pdhcps_pool == NULL) {
+			ret = dhcps_parse_options(&m->options[4], len);
+			
+			if(ret == DHCPS_STATE_OFFER)
+			{
+				printf("NE20 Mobile DHCP discover failure\n");
+#ifdef CONFIG_KLOGBUFFER
+				KLOG_BUFFER_ADD_ERROR("NE20", NULL);
+#endif
+			}
+			else if (ret == DHCPS_STATE_NAK)
+			{
+				printf("NE21 Mobile DHCP request failure\n");
+#ifdef CONFIG_KLOGBUFFER
+				KLOG_BUFFER_ADD_ERROR("NE21", NULL);
+#endif
+			}
 			return 0;
 		}
 		IN_ADDR_T(pdhcps_pool->ip).addr = IN_ADDR_T(client_address).addr;
@@ -601,6 +620,22 @@ static int16_t dhcps_parse_msg(struct dhcps_msg *m, u16_t len)
 
 		pnode = (struct list_node *)mem_malloc(sizeof(struct list_node));
 		if (pnode == NULL) {
+			ret = dhcps_parse_options(&m->options[4], len);
+
+			if(ret == DHCPS_STATE_OFFER)
+			{
+				printf("NE20 Mobile DHCP discover failure\n");
+#ifdef CONFIG_KLOGBUFFER
+				KLOG_BUFFER_ADD_ERROR("NE20", NULL);
+#endif
+			}
+			else if (ret == DHCPS_STATE_NAK)
+			{
+				printf("NE21 Mobile DHCP request failure\n");
+#ifdef CONFIG_KLOGBUFFER
+				KLOG_BUFFER_ADD_ERROR("NE21", NULL);
+#endif
+			}
 			return 0;
 		}
 		pnode->pnode = pdhcps_pool;
@@ -628,6 +663,23 @@ POOL_CHECK:
 			mem_free(pdhcps_pool);
 			pdhcps_pool = NULL;
 		}
+
+		ret = dhcps_parse_options(&m->options[4], len);
+
+		if(ret == DHCPS_STATE_OFFER)
+		{
+			printf("NE20 Mobile DHCP discover failure\n");
+#ifdef CONFIG_KLOGBUFFER
+			KLOG_BUFFER_ADD_ERROR("NE20", NULL);
+#endif
+		}
+		else if (ret == DHCPS_STATE_NAK)
+		{
+			printf("NE21 Mobile DHCP request failure\n");
+#ifdef CONFIG_KLOGBUFFER
+			KLOG_BUFFER_ADD_ERROR("NE21", NULL);
+#endif
+		}
 		return DHCPS_STATE_NAK;
 	}
 
@@ -651,6 +703,13 @@ POOL_CHECK:
 			pdhcps_pool = NULL;
 		}
 		memset(&client_address, 0x0, sizeof(client_address));
+	}
+	else if (ret == DHCPS_STATE_NAK) // for NAK by request
+	{
+		printf("NE21 Mobile DHCP request failure\n");
+#ifdef CONFIG_KLOGBUFFER
+		KLOG_BUFFER_ADD_ERROR("NE21", NULL);
+#endif
 	}
 
 	return ret;
@@ -717,10 +776,18 @@ static void dhcps_recv(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip_
 	switch (dhcps_parse_msg(pmsg_dhcps, tlen - 240)) {
 	case DHCPS_STATE_OFFER:	//1
 		LWIP_DEBUGF(DHCP_DEBUG, ("handle_dhcp(): DHCPD_STATE_OFFER\n"));
+		printf("NS20 Mobile DHCP discover success (send offer)\n");
+#ifdef CONFIG_KLOGBUFFER
+		KLOG_BUFFER_ADD_INFO("NS20", NULL);
+#endif
 		dhcps_send_msg(pmsg_dhcps, DHCP_OFFER);
 		break;
 	case DHCPS_STATE_ACK:		//3
 		LWIP_DEBUGF(DHCP_DEBUG, ("handle_dhcp(): DHCPD_STATE_ACK\n"));
+		printf("NS21 Mobile DHCP request success (send ack)\n");
+#ifdef CONFIG_KLOGBUFFER
+		KLOG_BUFFER_ADD_INFO("NS21", NULL);
+#endif
 		dhcps_send_msg(pmsg_dhcps, DHCP_ACK);
 
 		if (g_dhcp_sta_joined) {

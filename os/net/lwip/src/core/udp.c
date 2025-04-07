@@ -182,6 +182,34 @@ static u8_t udp_input_local_match(struct udp_pcb *pcb, struct netif *inp, u8_t b
 }
 
 /**
+ * Against to attack, need to masking ip address in logs. (from security team)
+ * @param full_addr input string
+ * @param masking_addr output string
+*/
+static void masking_ip_addr(char *full_addr, char *masking_addr)
+{
+	const int addr_len = (int)strnlen(full_addr, 15 + 1);
+
+	memset(masking_addr, 0, 15 + 1);
+
+	const int masking_pos[4] = {0, 1, 1, 0};  // 1 will be masked (000.xxx.xxx.000)
+	int pos = 0;
+
+	for (int i = 0, j = 0; i < addr_len; i++) {
+		if (full_addr[i] == '.') {
+			masking_addr[j++] = full_addr[i];
+			if (masking_pos[++pos] == 1) {
+				masking_addr[j++] = 'x';
+			}
+			continue;
+		}
+		if (masking_pos[pos] != 1) {
+			masking_addr[j++] = full_addr[i];
+		}
+	}
+}
+
+/**
  * Process an incoming UDP datagram.
  *
  * Given an incoming UDP datagram (as a chain of pbufs) this function
@@ -229,6 +257,23 @@ void udp_input(struct pbuf *p, struct netif *inp)
 	/* convert src and dest ports to host byte order */
 	src = lwip_ntohs(udphdr->src);
 	dest = lwip_ntohs(udphdr->dest);
+
+	time_t time_info = time(NULL);
+	struct tm *tm = localtime(&time_info);
+
+	// for korea time zone
+	tm->tm_hour = (tm->tm_hour + 9) % 24;
+
+	struct timespec current_time;
+	clock_gettime(CLOCK_REALTIME, &current_time);
+
+	char masking_addr[15+1] = {0, };
+	masking_ip_addr(ipaddr_ntoa(ip_current_src_addr()), masking_addr);
+
+	char log_buffer[96] = "";
+	snprintf(log_buffer, sizeof(log_buffer), "\e[35m|%02d:%02d:%02d|UR|%s|%huB|cs:%04hx\e[m",
+			tm->tm_hour, tm->tm_min, tm->tm_sec, masking_addr, p->tot_len, lwip_ntohs(udphdr->chksum));
+	puts(log_buffer);
 
 	udp_debug_print(udphdr);
 
@@ -794,6 +839,23 @@ err_t udp_sendto_if_src_chksum(struct udp_pcb *pcb, struct pbuf *p, const ip_add
 		}
 #endif							/* CHECKSUM_GEN_UDP */
 		ip_proto = IP_PROTO_UDP;
+
+		time_t time_info = time(NULL);
+		struct tm *tm = localtime(&time_info);
+
+		// for korea time zone
+		tm->tm_hour = (tm->tm_hour + 9) % 24;
+
+		struct timespec current_time;
+		clock_gettime(CLOCK_REALTIME, &current_time);
+
+		char masking_addr[15+1] = {0, };
+		masking_ip_addr(ipaddr_ntoa(ip_current_src_addr()), masking_addr);
+
+		char log_buffer[96] = "";
+		snprintf(log_buffer, sizeof(log_buffer), "\e[36m|%02d:%02d:%02d|US|%s|%huB|cs:%04hx\e[m",
+				tm->tm_hour, tm->tm_min, tm->tm_sec, masking_addr, q->tot_len, lwip_ntohs(udphdr->chksum));
+		puts(log_buffer);
 	}
 
 	/* Determine TTL to use */
