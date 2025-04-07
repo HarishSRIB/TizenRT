@@ -75,6 +75,8 @@
 
 #define PM_DRVPATH	  "/dev/pm"
 
+static int pm_domain_id = 0;
+
 /****************************************************************************
  * Definitions
  ****************************************************************************/
@@ -356,7 +358,7 @@ static int _pm_start(void)
 		return -1;
 	}
 
-	if (ioctl(fd, PMIOC_START, NULL) < 0) {
+	if (ioctl(fd, PMIOC_START, 0) < 0) {
 		printf("Fail to pm start(errno %d)\n", get_errno());
 		close(fd);
 		return -1;
@@ -395,7 +397,7 @@ static int _pm_suspend(int domain_id)
 		return -1;
 	}
 
-	if (ioctl(fd, PMIOC_SUSPEND, NULL) < 0) {
+	if (ioctl(fd, PMIOC_SUSPEND, domain_id) < 0) {
 		printf("Fail to pm suspend(errno %d)\n", get_errno());
 		close(fd);
 		return -1;
@@ -413,7 +415,7 @@ static int _pm_resume(int domain_id)
 		return -1;
 	}
 
-	if (ioctl(fd, PMIOC_RESUME, NULL) < 0) {
+	if (ioctl(fd, PMIOC_RESUME, domain_id) < 0) {
 		printf("Fail to pm resume(errno %d)\n", get_errno());
 		close(fd);
 		return -1;
@@ -423,10 +425,47 @@ static int _pm_resume(int domain_id)
 	return 0;
 }
 
-int mdns_stability_main(int argc, char *argv[])
+static int command_pm(int argc, char *argv[])
 {
-	sleep(2);
+	if (argc == 2 && !strcmp(argv[1], "start")) {
+		static int pm_started = 0;
+		if (pm_started) {
+			printf("pm is already started!\n");
+			return;
+		}
 
+		if (_pm_start() != 0) {
+			printf("pm start failed!\n");
+		}
+		else {
+			printf("pm start done!\n");
+		}
+		pm_started = 1;
+	} else if (argc == 3 && !strcmp(argv[1], "suspend")) {
+		int domain_id = atoi(argv[2]);
+		if (_pm_suspend(domain_id) != 0) {
+		    printf("pm suspend with domain id %d failed!\n", domain_id);
+		}
+		else {
+			printf("pm suspend with domain id %d done!\n", domain_id);
+		}
+	} else if (argc == 3 && !strcmp(argv[1], "resume")) {
+		int domain_id = atoi(argv[2]);
+		if (_pm_resume(domain_id) != 0) {
+		    printf("pm resume with domain id %d failed!\n", domain_id);
+		}
+		else {
+			printf("pm resume with domain id %d done!\n", domain_id);
+		}
+	} else {
+		printf("Wrong \"pm\" command usage!\n");
+	}
+
+	return 0;
+}
+
+static int start_mdns_stability_test(int argc, char *argv[])
+{
 	printf("\n==============================\n");
 	printf("MDNS STABILITY TEST APP\n");
 	printf("==============================\n");
@@ -434,20 +473,29 @@ int mdns_stability_main(int argc, char *argv[])
 	tash_cmdlist_t cmd_list[] = {
 		{"mdns", mdns_main, TASH_EXECMD_ASYNC},
 		{"wificonnect", connect_to_wifi, TASH_EXECMD_ASYNC},
+		{"pm", command_pm, TASH_EXECMD_ASYNC},
 		{NULL, NULL, 0}};
 	tash_cmdlist_install(cmd_list);
 	printf("Registering tash commands done!\n");
 
-	if (_pm_start() != 0) {
-        printf("system_pm_start failed!\n");
+	if (_pm_domain_register("MDNS_TEST", &pm_domain_id) != 0) {
+        printf("pm registration failed!\n");
 	}
 	else {
-		printf("system_pm_start done!\n");
+		printf("pm registration done! id=%d\n", pm_domain_id);
+	}
+}
+
+int mdns_stability_main(int argc, char *argv[])
+{
+	sleep(2);
+
+	int pid;
+	pid = task_create("start_mdns_stability_test", 100, 4*1024, start_mdns_stability_test, NULL);
+	if (pid < 0) {
+		printf("Fail to create start_mdns_stability_test task(errno %d)\n", get_errno());
+		return -1;
 	}
 
-	while (1)
-	{
-		sleep(1);
-	}
 	return 0;
 }
