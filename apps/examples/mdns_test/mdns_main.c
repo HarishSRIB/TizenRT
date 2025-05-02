@@ -61,12 +61,18 @@
 #include <tinyara/config.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <pthread.h>
 
 #include <protocols/mdnsd.h>
 
+#include <arpa/inet.h>
 #include <netinet/in.h>
 #include <netdb.h>
 #include <sys/socket.h>
+#include <sys/select.h>
+#include <sys/types.h>
 
 #include <apps/shell/tash.h>
 #include <wifi_manager/wifi_manager.h>
@@ -76,6 +82,9 @@
 #define PM_DRVPATH	  "/dev/pm"
 
 static int pm_domain_id = 0;
+
+int spR, spW, listensock;
+pthread_t test_thread;
 
 /****************************************************************************
  * Definitions
@@ -464,6 +473,207 @@ static int command_pm(int argc, char *argv[])
 	return 0;
 }
 
+int make_socket_non_blocking(int sockfd) {
+	int flags = fcntl(sockfd, F_GETFL, 0);
+	if (flags == -1)
+	{
+		printf("fcntl getting flag status failed\n");
+		return -1;
+	}
+	flags |= O_NONBLOCK;
+	if (fcntl(sockfd, F_SETFL, flags) == -1)
+	{
+		printf("fcntl setting non blocking flags failed\n");
+		return -1;
+	}
+	return 0;
+}
+
+void* _select_loop(void *data)
+{
+	fd_set readfds;
+	printf("Entering select loop\n");
+	while (1)
+	{
+		printf("Sleeping in select loop for 20 sec\n");
+		sleep(20);
+		printf("After 20 sec of sleep in select loop\n");
+		FD_ZERO(&readfds);
+		FD_SET(spR, &readfds);
+
+		int fdcount;
+
+		if ((fdcount = select(spR + 1, &readfds, NULL, NULL, NULL)) == -1)
+		{
+			printf("Select failed %s %d", strerror(get_errno()), get_errno());
+			return NULL;
+		}
+		if (FD_ISSET(spR, &readfds))
+		{
+			printf("received read signal in select loop\n");
+		}
+	}
+}
+
+void* _read_loop(void *data)
+{
+	while (1)
+	{
+		printf("Sleeping in read loop for 20 sec\n");
+		sleep(20);
+		printf("After 20 sec of sleep in read loop\n");
+		int read_ret;
+		char read_buf;
+		if ((read_ret = read(spR, &read_buf, 1)) <= 0)
+		{
+			printf("Read failed with %s %d\n", strerror(get_errno()), get_errno());
+		}
+		else
+		{
+			printf("Read %d bytes successfully\n", read_ret);
+		}
+		sleep(3);
+	}
+}
+
+static void _tcp_sockets_init(char *mode)
+{
+	struct sockaddr_in serv_addr;
+
+	if ((listensock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) == 0)
+	{
+		printf("Socket creation error\n");
+		return;
+	}
+
+	serv_addr.sin_family = AF_INET;
+	serv_addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+	serv_addr.sin_port = 0;
+
+	if (bind(listensock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
+	{
+		printf("Bind failed\n");
+		close(listensock);
+		return;
+	}
+
+	socklen_t len = sizeof(serv_addr);
+	if (getsockname(listensock, (struct sockaddr*)&serv_addr, &len) == -1) {
+		printf("getsockname failed\n");
+		close(listensock);
+		return;
+	}
+
+	if (listen(listensock, 1) < 0)
+	{
+		printf("Listen failed\n");
+		close(listensock);
+		return;
+	}
+
+	printf("Server listening on port %d\n", ntohs(serv_addr.sin_port));
+
+	if ((spR = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) == -1)
+	{
+		printf("Socket creation error\n");
+		close(listensock);
+		return;
+	}
+
+	if (make_socket_non_blocking(spR) != 0)
+	{
+		printf("Failed to set non-blocking mode for socket\n");
+		close(spR);
+		close(listensock);
+		return;
+	}
+
+	if (connect(spR, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
+	{
+		printf("Connect failed with %s %d\n", strerror(get_errno()), get_errno());
+	}
+
+	if ((spW = accept(listensock, NULL, 0)) < 0)
+	{
+		printf("Accept failed\n");
+		close(spR);
+		close(listensock);
+		return;
+	}
+
+	if (make_socket_non_blocking(spW) != 0)
+	{
+		printf("Failed to set non-blocking mode for socket\n");
+		close(spR);
+		close(listensock);
+		return;
+	}
+	close(listensock);
+	printf("spR:%d, spW:%d\n", spR, spW);
+
+	if (!strncmp(mode, "select", strlen("select")+1))
+	{
+		printf("Creating select loop thread\n");
+		if (pthread_create(&test_thread, NULL, _select_loop, NULL) != 0)
+		{
+			printf("Failed to create thread\n");
+			close(spR);
+			return;
+		}
+	} else if (!strncmp(mode, "read", strlen("read")+1))
+	{
+		printf("Creating read loop\n");
+		if (pthread_create(&test_thread, NULL, _read_loop, NULL) != 0)
+		{
+			printf("Failed to create thread\n");
+			close(spR);
+			return;
+		}
+	} else
+	{
+		printf("Unknown mode\n");
+		close(spR);
+		return;
+	}
+}
+
+static void _tcp_sockets_write(void) {
+	char buffer = 0;
+	int write_ret;
+
+	if ((write_ret = write(spW, &buffer, 1)) <= 0)
+	{
+		printf("Write failed with %s %d\n", strerror(get_errno()), get_errno());
+		return;
+	}
+	printf("Write %d bytes\n", write_ret);
+}
+
+static void _tcp_sockets_send(void) {
+	char buffer = 0;
+	int write_ret;
+
+	if ((write_ret = send(spW, &buffer, 1, 0)) <= 0)
+	{
+		printf("Sent failed with %s %d\n", strerror(get_errno()), get_errno());
+		return;
+	}
+	printf("Sent %d bytes\n", write_ret);
+}
+
+static int tcp_sockets_main(int argc, char *argv[]) {
+	if ((argc == 3) && !strncmp(argv[1], "init", strlen("init") + 1)) {
+		_tcp_sockets_init(argv[2]);
+	} else if((argc == 2) && !strncmp(argv[1], "write", strlen("write") + 1)) {
+		_tcp_sockets_write();
+	} else if((argc == 2) && !strncmp(argv[1], "send", strlen("send") + 1)) {
+		_tcp_sockets_send();
+	} else {
+		printf("Wrong \"tcpsock\" command usage!\n");
+	}
+	return 0;
+}
+
 static int start_mdns_stability_test(int argc, char *argv[])
 {
 	printf("\n==============================\n");
@@ -474,6 +684,7 @@ static int start_mdns_stability_test(int argc, char *argv[])
 		{"mdns", mdns_main, TASH_EXECMD_ASYNC},
 		{"wificonnect", connect_to_wifi, TASH_EXECMD_ASYNC},
 		{"pm", command_pm, TASH_EXECMD_ASYNC},
+		{"tcpsock", tcp_sockets_main, TASH_EXECMD_ASYNC},
 		{NULL, NULL, 0}};
 	tash_cmdlist_install(cmd_list);
 	printf("Registering tash commands done!\n");

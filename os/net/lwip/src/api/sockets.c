@@ -384,6 +384,7 @@ struct lwip_sock *get_socket(int s, void *group)
 
 	if ((s < 0) || (s >= CONFIG_NSOCKET_DESCRIPTORS)) {
 		LWIP_DEBUGF(SOCKETS_DEBUG, ("get_socket(%d): invalid\n", s + LWIP_SOCKET_OFFSET));
+		printf("[HARISH] [get_socket] get_socket(%d): invalid\n", s + LWIP_SOCKET_OFFSET);
 		set_errno(EBADF);
 		return NULL;
 	}
@@ -392,11 +393,13 @@ struct lwip_sock *get_socket(int s, void *group)
 	sock = (struct lwip_sock *)(slist->sl_sockets[s].sock);
 	if (!sock) {
 		LWIP_DEBUGF(SOCKETS_DEBUG, ("get_socket(%d): Socket is NULL.\n", s + LWIP_SOCKET_OFFSET));
+		printf("[HARISH] [get_socket] get_socket(%d): Socket is NULL.\n", s + LWIP_SOCKET_OFFSET);
 		set_errno(EBADF);
 		return NULL;
 	}
 	if (!sock->conn) {
 		LWIP_DEBUGF(SOCKETS_DEBUG, ("get_socket(%d): not active\n", s + LWIP_SOCKET_OFFSET));
+		printf("[HARISH] [get_socket] get_socket(%d): not active\n", s + LWIP_SOCKET_OFFSET);
 		set_errno(EBADF);
 		return NULL;
 	}
@@ -1022,6 +1025,7 @@ int lwip_send(int s, const void *data, size_t size, int flags)
 
 	sock = get_socket_by_pid(s, getpid());
 	if (!sock) {
+		printf("[HARISH] [lwip_send] get_socket_by_pid failed for %d\n", s);
 		return -1;
 	}
 
